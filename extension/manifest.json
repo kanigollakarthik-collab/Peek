@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Peek: product answers on Amazon search",
+  "short_name": "Peek",
+  "version": "0.1.0",
+  "description": "Shows returns, bank offers, warranty and answers to your own questions on every Amazon.in search result, without opening the product.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.amazon.in/*", "http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.amazon.in/*"],
+      "js": ["src/settings.js", "src/amazon.js", "src/ui.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Peek settings",
+    "default_popup": "popup/popup.html"
+  }
+}

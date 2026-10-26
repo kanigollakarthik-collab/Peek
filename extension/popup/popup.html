@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Peek</h1>
+
+  <label class="switch"><input type="checkbox" id="enabled"> Enabled on Amazon.in</label>
+
+  <fieldset>
+    <legend>Server</legend>
+    <label>URL <input id="serverUrl" placeholder="http://your-oracle-ip:8080"></label>
+    <label>Token <input id="token" type="password" placeholder="CLIENT_TOKEN from server/.env"></label>
+    <button id="test" type="button">Test connection</button>
+    <span id="testResult"></span>
+  </fieldset>
+
+  <fieldset>
+    <legend>Show on each card</legend>
+    <div class="grid">
+      <label><input type="checkbox" data-field="returns"> Returns</label>
+      <label><input type="checkbox" data-field="bankOffers"> Bank offer</label>
+      <label><input type="checkbox" data-field="warranty"> Warranty</label>
+      <label><input type="checkbox" data-field="delivery"> Delivery</label>
+      <label><input type="checkbox" data-field="seller"> Seller</label>
+      <label><input type="checkbox" data-field="highlights"> Key specs</label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Speed</legend>
+    <label>Parallel page fetches <input id="concurrency" type="number" min="1" max="24"></label>
+    <label>Max products per page <input id="maxProducts" type="number" min="1" max="60"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Last search</legend>
+    <div id="lastRun" class="muted">No search yet.</div>
+  </fieldset>
+
+  <script src="../src/settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
