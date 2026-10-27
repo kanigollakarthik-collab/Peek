@@ -56,7 +56,7 @@ const PeekUI = (() => {
       this.main.innerHTML = `<span class="err">${esc(msg)}</span>`;
     }
 
-    facts(facts, rules, fields, pending = false) {
+    facts(facts, rules, fields, pending = false, note = null) {
       const rows = [];
       if (fields.returns) rows.push(['Returns', returnsChip(facts, rules)]);
       const add = (on, label, value) => on && rows.push([label, value ? esc(value) : '<span class="muted">Not stated</span>']);
@@ -67,7 +67,8 @@ const PeekUI = (() => {
       add(fields.highlights, 'Specs', facts?.highlights);
       this.main.innerHTML =
         rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('') +
-        (pending ? `<div class="row">${spinner('Asking AI…')}</div>` : '');
+        (pending ? `<div class="row">${spinner('Asking AI…')}</div>` : '') +
+        (note ? `<div class="row muted">${esc(note)}</div>` : '');
     }
 
     answer(question, state) {

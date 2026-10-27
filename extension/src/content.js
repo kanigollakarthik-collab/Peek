@@ -77,7 +77,9 @@
   // ---------- rendering ----------
   function render(e) {
     for (const b of e.badges) {
-      if (e.factsError && !e.facts) b.error(e.factsError);
+      const hasRules = e.rules && Object.keys(e.rules).length > 0;
+      if (e.factsError && !e.facts && !hasRules) b.error(e.factsError);
+      else if (e.factsError && !e.facts) b.facts(null, e.rules, settings.fields, false, `AI unavailable: ${e.factsError}`);
       else if (e.facts || e.rules) b.facts(e.facts, e.rules, settings.fields, !e.facts);
       else b.loading(e.status || 'Reading product page…');
     }
