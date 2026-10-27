@@ -135,8 +135,23 @@ function extraBodyFor(p) {
 
 export const config = {
   port: num(process.env.PORT, 8080),
-  clientToken: process.env.CLIENT_TOKEN || '',
+  // 127.0.0.1 behind a reverse proxy (Caddy) so only HTTPS reaches the app.
+  host: process.env.HOST || '0.0.0.0',
   mongoUri: process.env.MONGODB_URI || '',
+  auth: {
+    // Signs login tokens. Long random string; the server won't start without it.
+    jwtSecret: process.env.JWT_SECRET || '',
+    tokenDays: num(process.env.TOKEN_DAYS, 30),
+    // Optional: if set, creating an account requires this code.
+    signupCode: process.env.SIGNUP_CODE || '',
+    // Accounts with these emails get the admin role (stats dashboard).
+    adminEmails: list(process.env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
+    // Lets the dev dashboard read /api/stats without an account. Never put it
+    // in the extension. CLIENT_TOKEN is the old name, still accepted.
+    adminToken: process.env.ADMIN_TOKEN || process.env.CLIENT_TOKEN || '',
+    // Uncached AI answers each user may request per hour (protects free keys).
+    userHourlyLimit: num(process.env.USER_HOURLY_LIMIT, 300),
+  },
   cacheTtlHours: num(process.env.CACHE_TTL_HOURS, 48),
   // Products per LLM call. 1 is the most reliable (no chance of the model
   // mixing up products); raise it to stretch per-minute limits further.
