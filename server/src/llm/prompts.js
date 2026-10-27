@@ -32,7 +32,7 @@ const FACTS_SCHEMA = `{
 
 export function factsTask(product) {
   return {
-    maxTokens: 350,
+    maxTokens: 800, // room for reasoning models; others stop early
     messages: [
       {
         role: 'system',
@@ -67,7 +67,7 @@ export function factsTask(product) {
 
 export function askTask(question, product) {
   return {
-    maxTokens: 120,
+    maxTokens: 400,
     messages: [
       {
         role: 'system',

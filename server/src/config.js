@@ -74,6 +74,28 @@ const providerDefs = [
   },
 ];
 
+// Reasoning models "think" before answering and that thinking counts against
+// max_tokens; for short extraction work, ask them to keep it brief.
+export function defaultExtraBody(model) {
+  if (/gpt-oss/i.test(model)) return { reasoning_effort: 'low' };
+  return {};
+}
+
+// <PROVIDER>_EXTRA_BODY in .env (JSON) overrides the extra request fields,
+// e.g. GROQ_EXTRA_BODY={"reasoning_effort":"low"}
+function extraBodyFor(p) {
+  const name = `${p.id.toUpperCase()}_EXTRA_BODY`;
+  const raw = process.env[name];
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      console.warn(`ignoring ${name}: not valid JSON`);
+    }
+  }
+  return defaultExtraBody(p.model);
+}
+
 export const config = {
   port: num(process.env.PORT, 8080),
   clientToken: process.env.CLIENT_TOKEN || '',
@@ -84,5 +106,7 @@ export const config = {
     hedgeMs: num(process.env.LLM_HEDGE_MS, 1500),
     maxAttempts: num(process.env.LLM_MAX_ATTEMPTS, 4),
   },
-  providers: providerDefs.filter((p) => p.baseUrl && p.keys.length > 0),
+  providers: providerDefs
+    .filter((p) => p.baseUrl && p.keys.length > 0)
+    .map((p) => ({ ...p, extraBody: extraBodyFor(p) })),
 };

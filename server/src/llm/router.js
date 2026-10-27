@@ -184,6 +184,7 @@ export class LlmRouter {
         messages: task.messages,
         max_tokens: task.maxTokens ?? 400,
         temperature: 0,
+        ...p.extraBody,
       };
       if (p.jsonMode) body.response_format = { type: 'json_object' };
 
