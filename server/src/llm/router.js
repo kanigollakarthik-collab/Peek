@@ -1,10 +1,44 @@
 // LLM API tree: one "slot" per (provider, key). Each request goes to the
 // fastest healthy slot with quota left; failures fail over to the next slot,
 // and a slow first attempt gets one hedged duplicate on another slot.
+// When every slot is busy, requests wait for one to free up (until the
+// task's deadline) instead of failing straight away.
 
 const MINUTE = 60_000;
 
 export class ParseError extends Error {}
+
+// The chat-completions body for one provider. Models without system-prompt
+// support (Gemma on the Gemini API) get the instructions folded into the
+// first user message instead.
+export function buildRequestBody(p, model, messages, maxTokens, extraBody = p.extraBody) {
+  let msgs = messages;
+  if (p.systemAsUser) {
+    const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+    msgs = messages.filter((m) => m.role !== 'system');
+    if (system && msgs.length) msgs = [{ ...msgs[0], content: `${system}\n\n${msgs[0].content}` }, ...msgs.slice(1)];
+  }
+  const body = { model, messages: msgs, max_tokens: maxTokens, temperature: 0, ...extraBody };
+  if (p.jsonMode) body.response_format = { type: 'json_object' };
+  return body;
+}
+
+// How long to bench a slot after a 429. Gemini says exactly when to retry
+// ("retryDelay": "36s") and whether the per-day quota is used up.
+function cooldownFor429(res, text) {
+  if (/per\s?day|perday|daily/i.test(text)) return 60 * MINUTE;
+  const retryDelay = text.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+  if (retryDelay) return Math.ceil(Number(retryDelay[1]) * 1000) + 500;
+  const retryAfter = Number(res.headers.get('retry-after'));
+  return retryAfter > 0 ? retryAfter * 1000 : 30_000;
+}
+
+// Rough token count for budgeting: ~4 characters per token for the prompt,
+// plus part of the reply budget (models rarely use all of it).
+export function estimateTokens(task) {
+  const chars = task.messages.reduce((n, m) => n + String(m.content).length, 0);
+  return Math.ceil(chars / 4) + Math.round((task.maxTokens ?? 400) * 0.6);
+}
 
 class Slot {
   constructor(provider, key, index) {
@@ -12,6 +46,7 @@ class Slot {
     this.provider = provider;
     this.key = key;
     this.minuteHits = [];
+    this.minuteTokens = []; // { t, n }
     this.dayCount = 0;
     this.day = new Date().toISOString().slice(0, 10);
     this.cooldownUntil = 0;
@@ -25,6 +60,7 @@ class Slot {
 
   refresh(now) {
     while (this.minuteHits.length && now - this.minuteHits[0] > MINUTE) this.minuteHits.shift();
+    while (this.minuteTokens.length && now - this.minuteTokens[0].t > MINUTE) this.minuteTokens.shift();
     const day = new Date(now).toISOString().slice(0, 10);
     if (day !== this.day) {
       this.day = day;
@@ -32,24 +68,39 @@ class Slot {
     }
   }
 
-  available(now) {
+  tokensUsed() {
+    return this.minuteTokens.reduce((n, e) => n + e.n, 0);
+  }
+
+  available(now, est) {
     this.refresh(now);
     const p = this.provider;
     return (
       now >= this.cooldownUntil &&
       this.inflight < p.maxInflight &&
       this.minuteHits.length < p.rpm &&
-      this.dayCount < p.rpd
+      this.dayCount < p.rpd &&
+      (!p.tpm || this.tokensUsed() + est <= p.tpm)
     );
   }
 
-  // Milliseconds until this slot could take a request again (ignoring inflight).
-  freesIn(now) {
+  // Milliseconds until this slot could take this request (ignoring inflight).
+  freesIn(now, est) {
     this.refresh(now);
-    if (this.dayCount >= this.provider.rpd) return Infinity;
+    const p = this.provider;
+    if (this.dayCount >= p.rpd || (p.tpm && est > p.tpm)) return Infinity;
     let wait = Math.max(0, this.cooldownUntil - now);
-    if (this.minuteHits.length >= this.provider.rpm) {
+    if (this.minuteHits.length >= p.rpm) {
       wait = Math.max(wait, MINUTE - (now - this.minuteHits[0]));
+    }
+    if (p.tpm) {
+      // Wait until enough of the last minute's tokens have aged out.
+      let used = this.tokensUsed();
+      for (const e of this.minuteTokens) {
+        if (used + est <= p.tpm) break;
+        used -= e.n;
+        wait = Math.max(wait, MINUTE - (now - e.t));
+      }
     }
     return wait;
   }
@@ -69,30 +120,34 @@ export class LlmRouter {
     return this.slots.length;
   }
 
-  pick(exclude) {
+  pick(exclude, est) {
     const now = Date.now();
-    const candidates = this.slots.filter((s) => !exclude.has(s.id) && s.available(now));
+    const candidates = this.slots.filter((s) => !exclude.has(s.id) && s.available(now, est));
     candidates.sort(
       (a, b) => a.provider.priority - b.provider.priority || a.score() - b.score(),
     );
     return candidates[0] || null;
   }
 
-  nextFreeIn(exclude) {
+  nextFreeIn(exclude, est) {
     const now = Date.now();
-    const waits = this.slots.filter((s) => !exclude.has(s.id)).map((s) => s.freesIn(now));
+    const waits = this.slots.filter((s) => !exclude.has(s.id)).map((s) => s.freesIn(now, est));
     return waits.length ? Math.min(...waits) : Infinity;
   }
 
   /**
    * Run a chat completion through the tree.
-   * @param {object} task { messages, maxTokens, parse(content) -> value }
+   * @param {object} task { messages, maxTokens, parse(content) -> value,
+   *   optional timeoutMs, hedgeMs, deadlineMs to override the router defaults }
    * @returns {Promise<{ value, slot, latencyMs, attempts }>}
    */
   run(task) {
-    const { timeoutMs, hedgeMs, maxAttempts } = this.opts;
+    const timeoutMs = task.timeoutMs ?? this.opts.timeoutMs;
+    const hedgeMs = task.hedgeMs ?? this.opts.hedgeMs;
+    const { maxAttempts } = this.opts;
     const started = Date.now();
-    const deadline = started + timeoutMs * 2;
+    const deadline = started + (task.deadlineMs ?? this.opts.queueMs ?? timeoutMs * 2);
+    const est = estimateTokens(task);
     const tried = new Set();
     const controllers = [];
     const errors = [];
@@ -122,12 +177,13 @@ export class LlmRouter {
           if (active === 0) giveUp();
           return;
         }
-        const slot = this.pick(tried);
+        const slot = this.pick(tried, est);
         if (!slot) {
-          // Everything is busy or rate limited; wait briefly if a slot frees soon.
-          const wait = this.nextFreeIn(tried);
+          // Everything is busy or rate limited: wait for the first slot to
+          // free up if that happens before the deadline.
           if (active === 0) {
-            if (wait < 1500 && Date.now() + wait < deadline) setTimeout(launch, wait + 10);
+            const wait = this.nextFreeIn(tried, est);
+            if (Date.now() + wait < deadline) setTimeout(launch, Math.max(wait, 100));
             else giveUp();
           }
           return;
@@ -144,7 +200,7 @@ export class LlmRouter {
               launch();
             }, hedgeMs);
 
-        this.callSlot(slot, task, ctrl.signal).then(
+        this.callSlot(slot, task, ctrl.signal, est, timeoutMs).then(
           (value) => {
             active--;
             clearTimeout(hedgeTimer);
@@ -171,22 +227,17 @@ export class LlmRouter {
     });
   }
 
-  async callSlot(slot, task, signal) {
+  async callSlot(slot, task, signal, est, timeoutMs) {
     const p = slot.provider;
     const now = Date.now();
+    const tokens = { t: now, n: est };
     slot.minuteHits.push(now);
+    slot.minuteTokens.push(tokens);
     slot.dayCount++;
     slot.inflight++;
     const t0 = now;
     try {
-      const body = {
-        model: p.model,
-        messages: task.messages,
-        max_tokens: task.maxTokens ?? 400,
-        temperature: 0,
-        ...p.extraBody,
-      };
-      if (p.jsonMode) body.response_format = { type: 'json_object' };
+      const body = buildRequestBody(p, p.model, task.messages, task.maxTokens ?? 400);
 
       const res = await fetch(`${p.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -195,15 +246,15 @@ export class LlmRouter {
           authorization: `Bearer ${slot.key}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.any([signal, AbortSignal.timeout(this.opts.timeoutMs)]),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       });
 
       if (!res.ok) {
-        const text = (await res.text().catch(() => '')).slice(0, 200);
+        const fullText = await res.text().catch(() => '');
+        const text = fullText.slice(0, 200);
         const err = new Error(`HTTP ${res.status} ${text}`.trim());
         if (res.status === 429) {
-          const retryAfter = Number(res.headers.get('retry-after'));
-          slot.cooldownUntil = Date.now() + (retryAfter > 0 ? retryAfter * 1000 : 30_000);
+          slot.cooldownUntil = Date.now() + cooldownFor429(res, fullText);
         } else if (res.status === 401 || res.status === 403) {
           slot.cooldownUntil = Date.now() + 10 * MINUTE;
         } else if (res.status === 402 || res.status === 404 || res.status === 410) {
@@ -217,6 +268,8 @@ export class LlmRouter {
       }
 
       const data = await res.json();
+      // Replace the estimate with the real count when the provider reports it.
+      if (data?.usage?.total_tokens) tokens.n = data.usage.total_tokens;
       const content = data?.choices?.[0]?.message?.content ?? '';
       const value = task.parse ? task.parse(content) : content;
 
@@ -252,6 +305,8 @@ export class LlmRouter {
         priority: s.provider.priority,
         rpmUsed: s.minuteHits.length,
         rpm: s.provider.rpm,
+        tpmUsed: s.tokensUsed(),
+        tpm: s.provider.tpm || null,
         dayUsed: s.dayCount,
         rpd: s.provider.rpd,
         inflight: s.inflight,

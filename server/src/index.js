@@ -5,8 +5,9 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { LlmRouter } from './llm/router.js';
-import { factsTask, askTask } from './llm/prompts.js';
-import { createCache } from './cache.js';
+import { factsTask, factsBatchTask, askTask, askBatchTask } from './llm/prompts.js';
+import { createCache, normalizeQuestion } from './cache.js';
+import { Batcher } from './batcher.js';
 
 const router = new LlmRouter(config.providers, config.llm);
 const cache = await createCache({ mongoUri: config.mongoUri, ttlHours: config.cacheTtlHours });
@@ -18,13 +19,71 @@ const log = (entry) => {
   if (recent.length > 300) recent.pop();
 };
 
+// Products arriving within 150 ms share one LLM call, up to BATCH_SIZE per
+// call (default 1: one product per call, the most reliable).
+const BATCH = { maxSize: config.batchSize, waitMs: config.batchSize > 1 ? 150 : 0 };
+
+// Sent when every key stayed busy for the whole wait; the extension retries.
+const BUSY = { error: 'All AI keys are busy', retry: true };
+
+// One call for the whole group; any product the model skipped gets one retry
+// on its own, so a partial reply never leaves a card empty.
+async function runGrouped(items, batchTask, singleTask) {
+  if (items.length === 1) return [await router.run(singleTask(items[0]))];
+  let r;
+  try {
+    r = await router.run(batchTask(items));
+  } catch (err) {
+    return items.map(() => err);
+  }
+  return Promise.all(
+    items.map(async (item, i) => {
+      if (r.value[i]) return { ...r, value: r.value[i] };
+      try {
+        return await router.run(singleTask(item));
+      } catch (err) {
+        return err;
+      }
+    }),
+  );
+}
+
+const extractBatcher = new Batcher({
+  ...BATCH,
+  runBatch: (products) => runGrouped(products, factsBatchTask, factsTask),
+});
+
+// One batcher per question, since a batched call answers a single question.
+const askBatchers = new Map();
+function askOne(question, product) {
+  const key = normalizeQuestion(question);
+  let batcher = askBatchers.get(key);
+  if (!batcher) {
+    batcher = new Batcher({
+      ...BATCH,
+      runBatch: (products) =>
+        runGrouped(products, (group) => askBatchTask(question, group), (p) => askTask(question, p)),
+    });
+    askBatchers.set(key, batcher);
+    if (askBatchers.size > 50) {
+      for (const [k, b] of askBatchers) {
+        if (!b.queue.length && k !== key) {
+          askBatchers.delete(k);
+          break;
+        }
+      }
+    }
+  }
+  return batcher.add(product);
+}
+
 // Coalesce concurrent extractions of the same ASIN into one LLM call.
 const pendingExtract = new Map();
 
 async function extractOne(p) {
   if (pendingExtract.has(p.asin)) return pendingExtract.get(p.asin);
   const job = (async () => {
-    const r = await router.run(factsTask(p));
+    const r = await extractBatcher.add(p);
     await cache.putProduct({
       _id: p.asin,
       title: p.title,
@@ -102,7 +161,7 @@ app.post('/api/extract', async (req, res) => {
         send({ asin: p.asin, facts: r.value, provider: r.slot, ms: Date.now() - t0 });
         log({ route: 'extract', asin: p.asin, provider: r.slot, attempts: r.attempts, ms: Date.now() - t0, ok: true });
       } catch (err) {
-        send({ asin: p.asin, error: 'LLM providers busy, retry shortly' });
+        send({ asin: p.asin, ...BUSY });
         log({ route: 'extract', asin: p.asin, ms: Date.now() - t0, ok: false, error: err.message.slice(0, 300) });
       }
     }),
@@ -133,12 +192,12 @@ app.post('/api/ask', async (req, res) => {
           send({ asin: p.asin, error: 'product not loaded yet' });
           return;
         }
-        const r = await router.run(askTask(question, product));
+        const r = await askOne(question, product);
         await cache.putAnswer(p.asin, question, { ...r.value, provider: r.slot });
         send({ asin: p.asin, ...r.value, provider: r.slot, ms: Date.now() - t0 });
         log({ route: 'ask', asin: p.asin, provider: r.slot, attempts: r.attempts, ms: Date.now() - t0, ok: true });
       } catch (err) {
-        send({ asin: p.asin, error: 'LLM providers busy, retry shortly' });
+        send({ asin: p.asin, ...BUSY });
         log({ route: 'ask', asin: p.asin, ms: Date.now() - t0, ok: false, error: err.message.slice(0, 300) });
       }
     }),
@@ -174,7 +233,11 @@ if (fs.existsSync(dist)) {
 }
 
 app.listen(config.port, () => {
-  console.log(`peek server on :${config.port} | cache=${cache.kind} | llm slots=${router.size}`);
-  for (const s of router.snapshot()) console.log(`  ${s.id.padEnd(14)} ${s.model}`);
+  console.log(
+    `peek server on :${config.port} | cache=${cache.kind} | llm slots=${router.size} | batch=${config.batchSize}`,
+  );
+  for (const s of router.snapshot()) {
+    console.log(`  ${s.id.padEnd(36)} prio ${s.priority}  ${s.rpm}/min  ${s.rpd}/day`);
+  }
   if (!router.size) console.warn('  no LLM keys configured: fill server/.env');
 });

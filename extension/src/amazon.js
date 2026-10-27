@@ -48,8 +48,8 @@ const Amazon = (() => {
     ['Details', '#productDetails_techSpec_section_1, #productDetails_detailBullets_sections1, #detailBullets_feature_div'],
     ['Description', '#productDescription'],
   ];
-  const SECTION_CAP = 1200;
-  const TOTAL_CAP = 6000;
+  const SECTION_CAP = 700;
+  const TOTAL_CAP = 3500; // ~900 tokens: free tiers cap tokens per minute
 
   const squash = (s) => s.replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, '\n').replace(/\n{2,}/g, '\n').trim();
 

@@ -135,6 +135,7 @@ export default function App() {
                       <th>Prio</th>
                       <th>State</th>
                       <th>Per minute</th>
+                      <th>Tokens/min</th>
                       <th>Today</th>
                       <th className="num">OK</th>
                       <th className="num">Fail</th>
@@ -153,6 +154,13 @@ export default function App() {
                         <td>{slotState(s)}</td>
                         <td>
                           <Meter used={s.rpmUsed} max={s.rpm} />
+                        </td>
+                        <td>
+                          {s.tpm ? (
+                            <Meter used={s.tpmUsed} max={s.tpm} />
+                          ) : (
+                            <span className="muted">{s.tpmUsed ? s.tpmUsed : '–'}</span>
+                          )}
                         </td>
                         <td>
                           <Meter used={s.dayUsed} max={s.rpd} />

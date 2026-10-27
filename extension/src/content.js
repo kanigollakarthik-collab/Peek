@@ -34,6 +34,26 @@
     });
   }
 
+  // The server already waits up to a minute for a free AI key. If every key
+  // stayed busy, try the product again a few more times before showing an error.
+  const AI_RETRY_DELAYS = [10_000, 30_000, 60_000];
+
+  function retryLater(e, kind) {
+    const field = kind === 'ask' ? 'askRetries' : 'factsRetries';
+    const n = e[field] || 0;
+    if (n >= AI_RETRY_DELAYS.length) return false;
+    e[field] = n + 1;
+    const askedFor = question;
+    setTimeout(() => {
+      if (kind === 'ask') {
+        if (question === askedFor) ask([e]);
+      } else {
+        bufferExtract({ asin: e.asin, title: e.title, text: e.text, rules: e.rules });
+      }
+    }, AI_RETRY_DELAYS[n]);
+    return true;
+  }
+
   function onMessage(msg) {
     if (msg.type === 'lookup') {
       pendingLookups.get(msg.id)?.(msg.hits || {});
@@ -42,12 +62,18 @@
     } else if (msg.type === 'facts') {
       const e = products.get(msg.asin);
       if (!e) return;
+      if (msg.error && msg.retry && e.text && retryLater(e, 'facts')) {
+        e.status = `AI keys busy, retry ${e.factsRetries} of ${AI_RETRY_DELAYS.length}…`;
+        render(e);
+        return;
+      }
       e.t.server = performance.now();
       e.provider = msg.provider || (msg.cached ? 'cache' : null);
       if (msg.error) {
         e.factsError = msg.error;
       } else {
         e.facts = msg.facts;
+        e.factsError = null;
       }
       render(e);
       finish(e);
@@ -55,6 +81,7 @@
     } else if (msg.type === 'answer') {
       const e = products.get(msg.asin);
       if (!e || msg.question !== question) return;
+      if (msg.error && msg.retry && retryLater(e, 'ask')) return; // keeps showing "Thinking…"
       e.answer = msg.error ? { error: msg.error } : { answer: msg.answer, evidence: msg.evidence };
       renderAnswer(e);
     } else if (msg.type === 'error') {
@@ -215,6 +242,7 @@
   function onAsk(q) {
     question = q;
     const all = [...products.values()];
+    for (const e of all) e.askRetries = 0;
     if (!q) {
       for (const e of all) renderAnswer(e);
       return;
