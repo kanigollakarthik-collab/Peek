@@ -3,7 +3,7 @@
 // The Peek server this build talks to. Set it to your deployed HTTPS address
 // before zipping the extension for testers; it can also be changed in the
 // popup under "Advanced".
-const PEEK_SERVER_URL = 'https://peek-server.example.com';
+const PEEK_SERVER_URL = 'peekshopping.duckdns.org';
 
 const PEEK_DEFAULTS = {
   enabled: true,
