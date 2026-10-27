@@ -40,7 +40,7 @@ Behind it, a server pools many free-tier AI keys into one reliable service (the 
 | Auth | bcryptjs, JSON Web Tokens | Hashed passwords; stateless, expiring sessions |
 | AI | Google Gemini and Gemma models plus Groq, through one OpenAI-compatible adapter | All free tiers, pooled by the router |
 | Admin UI | React 18 + Vite | Live view of the API tree |
-| Hosting | Oracle Cloud free micro VM (Hyderabad), PM2, Caddy (automatic HTTPS) | $0 total |
+| Hosting | Self-managed Oracle Cloud free VM (Hyderabad), PM2, Caddy (automatic HTTPS) | Always on, no time limits, close to users, $0 (see [Why our own server](#why-our-own-server)) |
 
 ## Architecture
 
@@ -144,6 +144,31 @@ All in `server/.env` (template: `server/.env.example`). **Never commit `.env`.**
 | `BATCH_SIZE`, `LLM_TIMEOUT_MS`, `LLM_HEDGE_MS`, `LLM_MAX_ATTEMPTS`, `LLM_QUEUE_MS` | no | Router tuning |
 
 ## Deployment
+
+### Why our own server
+
+The easy route would have been a one-click host such as Vercel or Render. We weighed the trade-offs and chose to run our own Linux server instead, because Peek's core design depends on things those free plans don't give:
+
+| What Peek needs | Vercel (serverless) | Render (free) | Our Oracle VM |
+|---|---|---|---|
+| **One process that remembers.** The LLM API tree keeps every key's rate counters, cooldowns and the waiting queue in memory. | Many short-lived copies that forget between requests; state would have to move to Redis | Memory is wiped every time the service sleeps | One process, always running |
+| **Long requests.** A 20-product search can wait up to 60 s for a free AI key and streams results for its whole length. | Function time limits cut it off | Works | Works |
+| **Always available.** A tester should get answers on the first try. | Yes | Sleeps after ~15 min idle; the first request then waits 30–60 s | Always on, restarts itself after a crash or reboot |
+| **Close to users.** Shoppers and Amazon.in are in India. | One region per project | Nearest is Singapore | Hyderabad |
+| **Room to grow.** Rotating proxies and background cache warming (see [Future Work](#future-work)) are long-running jobs. | Not possible on free functions | Limited by sleep | Ready |
+
+It also cost $0, the same as the hosted options. The price was doing the operations work ourselves:
+
+- **Provisioning a 1 GB VM.** Added 2 GB of swap so `npm install` and the dashboard build don't run out of memory. Installed Node 22 (`deploy/setup-oracle.sh`).
+- **Process management.** PM2 keeps the server running, restarts it if it crashes, and starts it at boot (`deploy/ecosystem.config.cjs`).
+- **Networking.** Oracle's Ubuntu images block every port by default, so we opened the OS firewall (iptables, saved across reboots) and the cloud's VCN security list.
+- **A domain and HTTPS.** We used a free DuckDNS name and Caddy as a reverse proxy, which gets and renews Let's Encrypt certificates automatically. Caddy is set to pass each streamed line through immediately so cards still fill one by one (`deploy/setup-https.sh`).
+- **Hardening.** The Node app listens on `127.0.0.1` only, so the only way in is through HTTPS. Secrets live only in `server/.env` on the server, and `trust proxy` is set so per-IP login limits see the real client address.
+- **Debugging it live.** Along the way we fixed MongoDB Atlas authentication and connection-string issues, blocked ports, and providers retiring models (now detected by `npm run check:models`).
+
+All of it is scripted, so the whole server can be rebuilt from a fresh VM with three commands.
+
+### Setting it up
 
 **Server:** an Oracle Cloud free micro VM (Ubuntu, Hyderabad).
 
