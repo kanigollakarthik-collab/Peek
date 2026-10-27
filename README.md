@@ -184,6 +184,46 @@ deploy/      Oracle VM setup, HTTPS (Caddy), PM2 config
 - Answers are only as good as what the product page states; Peek says *Not stated* rather than guessing.
 - The extension is loaded unpacked (Chrome Web Store publishing costs a fee).
 
+## Future Work
+
+### Read the data hidden behind pop-ups and "See more"
+
+Today Peek reads what is in the product page's HTML when it first loads. Some of the most useful details are not there yet. Amazon loads them only when you click:
+
+- **Bank offers.** The offer cards show a one-line summary. The full list, card types, minimum order value and the terms open in a side sheet.
+- **Returns policy.** The "10 days Replacement" icon opens a pop-up with the actual conditions (what counts as damaged, whether opened items qualify).
+- **EMI, exchange and protection plans.** These open in their own pop-ups.
+- **Delivery for your pincode, and other sellers' offers** ("See all buying options"), which can have different returns and warranty.
+
+Plan:
+1. In the fetched page, find the pop-up triggers. Amazon's pop-up markup usually names the address its content loads from (for example in a `data-a-popover` attribute).
+2. Fetch those addresses from the same tab and session, with the same pacing and retry rules as product pages.
+3. Clean the result and add it to the matching section ("Offers", "Returns and services") before the text goes to the AI, within the size budget.
+4. Cache it with the product, so the extra requests happen once per product, not once per user.
+
+Hidden-but-present content, such as collapsed "See more" specs, gets the same treatment: keep it, and drop only scripts and styles.
+
+### Rotating proxies and server-side fetching
+
+Product pages are fetched by the user's own browser today. That is simple and free, but it means:
+- Amazon can slow down or show a CAPTCHA to a heavy user.
+- Nothing can be fetched unless someone has the search open.
+
+Plan:
+- **Fetch on the server through a pool of rotating proxies.** Every proxy becomes a *slot*, just like the AI keys in the LLM API tree: health checks, cooldown after a block or CAPTCHA, and failover to the next proxy. The existing router design carries over almost unchanged.
+- **Warm the cache ahead of time.** Fetch popular searches and products in the background, so most results are instant for everyone.
+- **Keep the browser as a fallback.** Use it when the proxy pool is empty, and keep it for anything that depends on the user's location or account (pincode delivery, Prime).
+
+### Other ideas
+
+- **Filter and sort by the answers**, for example "hide non-returnable" or "only items with an HDFC offer".
+- **Compare view:** a table of the facts for chosen products, side by side.
+- **Answer feedback:** a "wrong answer" button that drops the cached answer and re-reads the page, plus a dashboard metric for it.
+- **Variant awareness:** colour and size variants can have different sellers and offers. Read them per variant ASIN.
+- **More stores** (for example Flipkart) through a per-site adapter like `amazon.js`. The server and the AI router need no change.
+- **Selector health:** have the dashboard track how often the generic fallback is used, as an early warning that Amazon changed its layout.
+- **Chrome Web Store release and CI:** run the router and API tests on every push.
+
 ## AI Usage
 
 AI assistants were used for brainstorming, code generation, debugging and documentation. Every part was reviewed, tested (router tests, end-to-end API tests, manual tests on Amazon.in) and integrated by the author.
