@@ -15,6 +15,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(status === 200 ? { choices: [{ message: { content } }] } : { error: 'x' }));
   };
   if (mode === 'limited') return reply(429, '', { 'retry-after': '20' });
+  if (mode === 'gone') return reply(404, '');
   if (mode === 'junk') return reply(200, 'Sure! Here are the facts you asked for.');
   if (mode === 'slow') return setTimeout(() => reply(200, good), 2500);
   if (mode === 'fenced') return reply(200, '```json\n' + good + '\n```');
@@ -58,7 +59,15 @@ const used = router.snapshot().map((s) => s.rpmUsed);
 assert.deepEqual(used, [3, 3]);
 console.log(`ok  rpm cap spreads load: ${used.join(' / ')}`);
 
-// 5. All providers exhausted: a clean error, not a hang.
+// 5. A retired model (404) benches the slot for a long time, not 5 seconds.
+router = new LlmRouter([prov('gone', 1), prov('ok', 2)], opts);
+r = await router.run(factsTask(product));
+assert.equal(r.provider, 'ok');
+const gone = router.snapshot().find((s) => s.provider === 'gone');
+assert.ok(gone.cooldownMs > 20 * 60_000, '404 should bench the slot for ~30 min');
+console.log(`ok  retired model benched for ${Math.round(gone.cooldownMs / 60_000)} min`);
+
+// 6. All providers exhausted: a clean error, not a hang.
 router = new LlmRouter([prov('limited', 1), prov('junk', 2)], opts);
 await assert.rejects(router.run(factsTask(product)));
 console.log('ok  exhaustion rejects cleanly');

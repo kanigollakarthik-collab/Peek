@@ -25,7 +25,7 @@ const providerDefs = [
     id: 'gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     keys: list(process.env.GEMINI_API_KEYS),
-    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
+    model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
     priority: 2, rpm: 15, rpd: 1000, maxInflight: 5, jsonMode: true,
   },
   {

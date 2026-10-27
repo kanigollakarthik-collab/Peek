@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test:router": "node scripts/router-smoke.js"
+    "test:router": "node scripts/router-smoke.js",
+    "check:models": "node scripts/check-models.js"
   },
   "engines": {
     "node": ">=20"

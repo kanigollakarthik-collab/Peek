@@ -205,6 +205,10 @@ export class LlmRouter {
           slot.cooldownUntil = Date.now() + (retryAfter > 0 ? retryAfter * 1000 : 30_000);
         } else if (res.status === 401 || res.status === 403) {
           slot.cooldownUntil = Date.now() + 10 * MINUTE;
+        } else if (res.status === 402 || res.status === 404 || res.status === 410) {
+          // Out of credit, or the model was renamed or retired: retrying won't
+          // help until .env is fixed, so bench the slot for half an hour.
+          slot.cooldownUntil = Date.now() + 30 * MINUTE;
         } else {
           err.transient = true;
         }
