@@ -95,7 +95,7 @@ export default function App() {
         </h1>
         <input
           type="password"
-          placeholder="CLIENT_TOKEN"
+          placeholder="ADMIN_TOKEN"
           value={token}
           onChange={(e) => saveToken(e.target.value)}
         />

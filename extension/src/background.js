@@ -1,18 +1,34 @@
-// Relays content-script requests to the Peek server. Lives in the service
-// worker because it has host permission for the server (no CORS or
-// mixed-content issues) and keeps the server token off the Amazon page.
+// Relays content-script requests to the Peek server with the signed-in user's
+// token. The token never touches the Amazon page itself.
 
 importScripts('settings.js');
 
+class AuthError extends Error {}
+
 async function callServer(path, body, signal) {
-  const s = await peekSettings();
-  const res = await fetch(s.serverUrl.replace(/\/+$/, '') + path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': s.token },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (!res.ok) throw new Error(`server ${res.status}`);
+  const [settings, auth] = await Promise.all([peekSettings(), peekAuth()]);
+  if (!auth) throw new AuthError('Sign in to Peek to see answers');
+  let res;
+  try {
+    res = await fetch(peekServerBase(settings) + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${auth.token}` },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (signal.aborted) throw err;
+    throw new Error("Can't reach the Peek server");
+  }
+  if (res.status === 401) {
+    const data = await res.json().catch(() => ({}));
+    await peekClearAuth();
+    throw new AuthError(data.error || 'Session expired, sign in again');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Server error (${res.status})`);
+  }
   return res;
 }
 
@@ -63,8 +79,9 @@ chrome.runtime.onConnect.addListener((port) => {
       }
     } catch (err) {
       if (ctrl.signal.aborted) return;
+      if (err instanceof AuthError) post({ type: 'auth', error: err.message });
       if (msg.type === 'lookup') {
-        post({ type: 'lookup', id: msg.id, hits: {}, error: err.message });
+        post({ type: 'lookup', id: msg.id, hits: {}, error: err.message, auth: err instanceof AuthError });
       } else {
         post({ type: 'error', kind: msg.type, message: err.message, asins: msg.products.map((p) => p.asin) });
       }

@@ -11,6 +11,7 @@
   const run = { t0: 0, total: 0, done: 0, timer: 0 };
   let question = '';
   let hud = null;
+  let signedIn = !!(await peekAuth());
 
   // ---------- background connection ----------
   let port = null;
@@ -54,11 +55,29 @@
     return true;
   }
 
+  // Not signed in (or the session expired): stop work and point to the popup.
+  function signOutState(message) {
+    signedIn = false;
+    queue.length = 0;
+    extractBuf = [];
+    if (!Amazon.getCards().length) return;
+    if (!hud) hud = new PeekUI.Hud({ onAsk });
+    hud.signedOut(message);
+    for (const e of products.values()) {
+      if (e.done) continue;
+      e.factsError = 'Sign in to see answers';
+      render(e);
+      finish(e);
+    }
+  }
+
   function onMessage(msg) {
-    if (msg.type === 'lookup') {
+    if (msg.type === 'auth') {
+      signOutState(msg.error);
+    } else if (msg.type === 'lookup') {
       pendingLookups.get(msg.id)?.(msg.hits || {});
       pendingLookups.delete(msg.id);
-      if (msg.error) hud?.warn(`Server unreachable: ${msg.error}`);
+      if (msg.error && !msg.auth) hud?.warn(msg.error);
     } else if (msg.type === 'facts') {
       const e = products.get(msg.asin);
       if (!e) return;
@@ -71,6 +90,7 @@
       e.provider = msg.provider || (msg.cached ? 'cache' : null);
       if (msg.error) {
         e.factsError = msg.error;
+        if (msg.limit) hud?.warn('You reached your hourly limit of new answers. Cached answers still work.');
       } else {
         e.facts = msg.facts;
         e.factsError = null;
@@ -85,7 +105,8 @@
       e.answer = msg.error ? { error: msg.error } : { answer: msg.answer, evidence: msg.evidence };
       renderAnswer(e);
     } else if (msg.type === 'error') {
-      hud?.warn(`Server error: ${msg.message}`);
+      if (!signedIn) return;
+      hud?.warn(msg.message);
       for (const asin of msg.asins || []) {
         const e = products.get(asin);
         if (!e) continue;
@@ -211,6 +232,7 @@
   let extractBuf = [];
   let flushTimer = 0;
   function bufferExtract(p) {
+    if (!signedIn) return;
     extractBuf.push(p);
     if (extractBuf.length >= 6) flushExtract();
     else if (!flushTimer) flushTimer = setTimeout(flushExtract, 60);
@@ -225,7 +247,7 @@
 
   // ---------- custom questions ----------
   function ask(entries) {
-    if (!question || !entries.length) return;
+    if (!signedIn || !question || !entries.length) return;
     for (const e of entries) {
       e.answer = null;
       renderAnswer(e);
@@ -284,6 +306,7 @@
 
     for (const e of fresh) e.status = 'Checking cache…';
     const hits = await lookup(fresh.map((e) => e.asin));
+    if (!signedIn) return;
     for (const e of fresh) {
       const hit = hits[e.asin];
       if (hit?.facts) {
@@ -302,17 +325,32 @@
     pump();
   }
 
+  chrome.storage.onChanged.addListener(async (changes, area) => {
+    if (area === 'sync') {
+      settings = await peekSettings();
+      for (const e of products.values()) render(e);
+      return;
+    }
+    // Signed in from the popup: reload so this page starts fresh with answers.
+    if (changes.auth?.newValue && !signedIn) location.reload();
+    // A question picked from the popup's history.
+    const pick = changes.askNow?.newValue;
+    if (pick?.question && signedIn) {
+      hud?.setQuestion(pick.question);
+      onAsk(pick.question);
+    }
+  });
+
+  if (!signedIn) {
+    signOutState();
+    return;
+  }
+
   let discoverTimer = 0;
   new MutationObserver(() => {
     clearTimeout(discoverTimer);
     discoverTimer = setTimeout(discover, 50);
   }).observe(document.body, { childList: true, subtree: true });
-
-  chrome.storage.onChanged.addListener(async (_changes, area) => {
-    if (area !== 'sync') return;
-    settings = await peekSettings();
-    for (const e of products.values()) render(e);
-  });
 
   discover();
 })();

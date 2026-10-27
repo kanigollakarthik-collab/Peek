@@ -98,6 +98,8 @@ const PeekUI = (() => {
     button { font: inherit; padding: 6px 10px; border: 0; border-radius: 8px; background: #6b3fa0; color: #fff; cursor: pointer; }
     button.ghost { background: none; color: #565959; padding: 2px 4px; }
     .warn { color: #a01818; margin-top: 6px; }
+    .signin { color: #0f1111; }
+    .hint { color: #565959; font-size: 12px; margin-top: 6px; }
   `;
 
   class Hud {
@@ -107,21 +109,39 @@ const PeekUI = (() => {
       root.innerHTML = `<style>${HUD_CSS}</style>
         <div class="hud">
           <div class="top"><b>Peek</b><span class="stat">starting…</span></div>
-          <form><input placeholder="Ask every product… e.g. is it waterproof?" maxlength="200"><button>Ask</button></form>
+          <form><input placeholder="Ask every product… e.g. is it waterproof?" maxlength="200" minlength="3"><button>Ask</button></form>
+          <div class="hint">Answers come only from each product's page. Clear the box and press Ask to hide them.</div>
+          <div class="signin" hidden></div>
           <div class="warn" hidden></div>
         </div>`;
       this.stat = root.querySelector('.stat');
+      this.form = root.querySelector('form');
+      this.hint = root.querySelector('.hint');
+      this.signinEl = root.querySelector('.signin');
       this.warnEl = root.querySelector('.warn');
-      const input = root.querySelector('input');
-      root.querySelector('form').addEventListener('submit', (e) => {
+      this.input = root.querySelector('input');
+      this.form.addEventListener('submit', (e) => {
         e.preventDefault();
-        onAsk(input.value.trim());
+        onAsk(this.input.value.trim());
       });
       document.documentElement.appendChild(this.host);
     }
 
     progress(done, total, ms) {
       this.stat.textContent = `${done}/${total} · ${(ms / 1000).toFixed(1)}s`;
+    }
+
+    // Shown instead of the question box when nobody is signed in.
+    signedOut(msg) {
+      this.form.hidden = true;
+      this.hint.hidden = true;
+      this.stat.textContent = '';
+      this.signinEl.hidden = false;
+      this.signinEl.textContent = `${msg || 'Sign in to see answers on every product.'} Click the Peek icon in your browser toolbar to sign in.`;
+    }
+
+    setQuestion(q) {
+      this.input.value = q;
     }
 
     warn(msg) {

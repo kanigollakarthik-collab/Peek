@@ -5,40 +5,79 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <h1>Peek</h1>
+  <header>
+    <h1>Peek</h1>
+    <p class="tagline">Answers about every Amazon.in search result, without opening each product.</p>
+  </header>
 
-  <label class="switch"><input type="checkbox" id="enabled"> Enabled on Amazon.in</label>
-
-  <fieldset>
-    <legend>Server</legend>
-    <label>URL <input id="serverUrl" placeholder="http://your-oracle-ip:8080"></label>
-    <label>Token <input id="token" type="password" placeholder="CLIENT_TOKEN from server/.env"></label>
-    <button id="test" type="button">Test connection</button>
-    <span id="testResult"></span>
-  </fieldset>
-
-  <fieldset>
-    <legend>Show on each card</legend>
-    <div class="grid">
-      <label><input type="checkbox" data-field="returns"> Returns</label>
-      <label><input type="checkbox" data-field="bankOffers"> Bank offer</label>
-      <label><input type="checkbox" data-field="warranty"> Warranty</label>
-      <label><input type="checkbox" data-field="delivery"> Delivery</label>
-      <label><input type="checkbox" data-field="seller"> Seller</label>
-      <label><input type="checkbox" data-field="highlights"> Key specs</label>
+  <!-- Signed out: sign in or create an account -->
+  <section id="signedOut" hidden>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" data-mode="login" role="tab">Sign in</button>
+      <button type="button" class="tab" data-mode="register" role="tab">Create account</button>
     </div>
-  </fieldset>
+    <form id="authForm" novalidate>
+      <label>Email <input id="email" type="email" autocomplete="email" required></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" minlength="8" required></label>
+      <label id="codeRow" hidden>Signup code <input id="code" autocomplete="off"></label>
+      <p id="passwordHint" class="muted small" hidden>At least 8 characters.</p>
+      <button id="authSubmit" type="submit">Sign in</button>
+      <p id="authMessage" class="message" role="alert"></p>
+    </form>
+  </section>
 
-  <fieldset>
-    <legend>Speed</legend>
+  <!-- Signed in -->
+  <section id="signedIn" hidden>
+    <div class="row between">
+      <span>Signed in as <b id="userEmail"></b></span>
+      <button id="signOut" type="button" class="link">Sign out</button>
+    </div>
+
+    <label class="switch"><input type="checkbox" id="enabled"> Show answers on Amazon.in</label>
+
+    <div class="steps" id="howTo">
+      <b>How to use</b>
+      <ol>
+        <li>Search for anything on <a href="https://www.amazon.in" target="_blank">amazon.in</a>.</li>
+        <li>Each result shows returns, bank offers and warranty.</li>
+        <li>Ask your own question in the Peek box at the bottom right.</li>
+      </ol>
+    </div>
+
+    <fieldset>
+      <legend>Your recent questions</legend>
+      <ul id="questions" class="questions"></ul>
+      <p id="questionsEmpty" class="muted small">Questions you ask appear here. Click one to ask it again on the open Amazon tab.</p>
+      <button id="clearQuestions" type="button" class="link" hidden>Clear history</button>
+      <p id="questionsMessage" class="message"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Show on each card</legend>
+      <div class="grid">
+        <label><input type="checkbox" data-field="returns"> Returns</label>
+        <label><input type="checkbox" data-field="bankOffers"> Bank offer</label>
+        <label><input type="checkbox" data-field="warranty"> Warranty</label>
+        <label><input type="checkbox" data-field="delivery"> Delivery</label>
+        <label><input type="checkbox" data-field="seller"> Seller</label>
+        <label><input type="checkbox" data-field="highlights"> Key specs</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Last search</legend>
+      <div id="lastRun" class="muted small">No search yet.</div>
+    </fieldset>
+  </section>
+
+  <details id="advanced">
+    <summary>Advanced</summary>
+    <label>Server address <input id="serverUrl" placeholder="https://your-server"></label>
     <label>Parallel page fetches <input id="concurrency" type="number" min="1" max="24"></label>
     <label>Max products per page <input id="maxProducts" type="number" min="1" max="60"></label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Last search</legend>
-    <div id="lastRun" class="muted">No search yet.</div>
-  </fieldset>
+    <button id="test" type="button" class="secondary">Test connection</button>
+    <span id="testResult" class="small"></span>
+  </details>
 
   <script src="../src/settings.js"></script>
   <script src="popup.js"></script>
